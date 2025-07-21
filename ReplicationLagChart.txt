@@ -1,0 +1,162 @@
+import React from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+
+const ReplicationLagChart = ({ data }) => {
+    const formatChartData = () => {
+        if (!data || data.length === 0) return [];
+        
+        return data.map((item, index) => ({
+            replica: item.application_name || `Replica ${index + 1}`,
+            lag_seconds: parseFloat(item.lag_seconds || 0),
+            connection_duration: parseFloat(item.connection_duration || 0),
+            state: item.state || 'unknown',
+            client_addr: item.client_addr || 'Unknown'
+        }));
+    };
+
+    const chartData = formatChartData();
+
+    const getLagColor = (lag) => {
+        if (lag === null || lag === undefined) return '#95a5a6';
+        if (lag < 1) return '#2ecc71';
+        if (lag < 5) return '#f39c12';
+        if (lag < 10) return '#e67e22';
+        return '#e74c3c';
+    };
+
+    const getStateColor = (state) => {
+        switch (state?.toLowerCase()) {
+            case 'streaming': return '#2ecc71';
+            case 'catchup': return '#f39c12';
+            case 'backup': return '#3498db';
+            default: return '#95a5a6';
+        }
+    };
+
+    const CustomTooltip = ({ active, payload, label }) => {
+        if (active && payload && payload.length) {
+            const data = payload[0].payload;
+            return (
+                <div style={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    padding: '12px',
+                    border: '1px solid #ccc',
+                    borderRadius: '8px',
+                    minWidth: '200px'
+                }}>
+                    <p style={{ margin: '0 0 8px 0', fontWeight: 'bold' }}>{label}</p>
+                    <p style={{ margin: '4px 0', color: getLagColor(data.lag_seconds) }}>
+                        Lag: {data.lag_seconds !== null ? `${data.lag_seconds.toFixed(2)}s` : 'N/A'}
+                    </p>
+                    <p style={{ margin: '4px 0', color: '#666' }}>
+                        State: <span style={{ color: getStateColor(data.state) }}>{data.state}</span>
+                    </p>
+                    <p style={{ margin: '4px 0', color: '#666' }}>
+                        Client: {data.client_addr}
+                    </p>
+                    <p style={{ margin: '4px 0', color: '#666' }}>
+                        Connection: {(data.connection_duration / 3600).toFixed(1)}h
+                    </p>
+                </div>
+            );
+        }
+        return null;
+    };
+
+    if (!data || data.length === 0) {
+        return (
+            <div style={{ 
+                height: '300px', 
+                display: 'flex', 
+                flexDirection: 'column',
+                alignItems: 'center', 
+                justifyContent: 'center',
+                color: '#666',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '8px',
+                border: '2px dashed #dee2e6'
+            }}>
+                <div style={{ fontSize: '3rem', marginBottom: '10px' }}>📊</div>
+                <p style={{ margin: '0', fontSize: '1.1rem' }}>No replication data available</p>
+                <p style={{ margin: '5px 0 0 0', fontSize: '0.9rem', color: '#999' }}>
+                    Check if logical replication is configured
+                </p>
+            </div>
+        );
+    }
+
+    // Calculate max lag for better chart scaling
+    const maxLag = Math.max(...chartData.map(item => item.lag_seconds || 0));
+    const yAxisMax = Math.max(maxLag * 1.2, 10); // At least 10 seconds for scale
+
+    return (
+        <div style={{ height: '300px' }}>
+            {/* Summary Stats */}
+            <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                marginBottom: '15px',
+                padding: '10px',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '8px'
+            }}>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#2c3e50' }}>
+                        {data.length}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#666' }}>Replicas</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ 
+                        fontSize: '1.2rem', 
+                        fontWeight: 'bold', 
+                        color: getLagColor(maxLag)
+                    }}>
+                        {maxLag.toFixed(2)}s
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#666' }}>Max Lag</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ 
+                        fontSize: '1.2rem', 
+                        fontWeight: 'bold', 
+                        color: getStateColor('streaming')
+                    }}>
+                        {data.filter(item => item.state === 'streaming').length}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#666' }}>Streaming</div>
+                </div>
+            </div>
+
+            <ResponsiveContainer width="100%" height="80%">
+                <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                        dataKey="replica" 
+                        fontSize={10}
+                        angle={-45}
+                        textAnchor="end"
+                        height={60}
+                    />
+                    <YAxis 
+                        domain={[0, yAxisMax]}
+                        label={{ value: 'Lag (seconds)', angle: -90, position: 'insideLeft' }}
+                        fontSize={10}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Bar 
+                        dataKey="lag_seconds" 
+                        radius={[4, 4, 0, 0]}
+                        fill={(entry) => getLagColor(entry?.lag_seconds)}
+                    >
+                        {chartData.map((entry, index) => (
+                            <Bar key={index} fill={getLagColor(entry.lag_seconds)} />
+                        ))}
+                    </Bar>
+                </BarChart>
+            </ResponsiveContainer>
+        </div>
+    );
+};
+
+export default ReplicationLagChart;

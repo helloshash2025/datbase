@@ -1,0 +1,247 @@
+import React from 'react';
+
+const BlockingQueriesTable = ({ data }) => {
+    const truncateQuery = (query, maxLength = 100) => {
+        if (!query) return 'N/A';
+        return query.length > maxLength ? query.substring(0, maxLength) + '...' : query;
+    };
+
+    if (!data || data.length === 0) {
+        return (
+            <div style={{ 
+                height: '200px', 
+                display: 'flex', 
+                flexDirection: 'column',
+                alignItems: 'center', 
+                justifyContent: 'center',
+                color: '#666',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '8px',
+                border: '2px dashed #dee2e6'
+            }}>
+                <div style={{ fontSize: '3rem', marginBottom: '10px' }}>✅</div>
+                <p style={{ margin: '0', fontSize: '1.1rem', color: '#2ecc71' }}>No blocking queries detected</p>
+                <p style={{ margin: '5px 0 0 0', fontSize: '0.9rem', color: '#999' }}>
+                    All queries are running smoothly
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ height: '300px', overflowY: 'auto' }}>
+            {/* Alert Banner */}
+            <div style={{
+                backgroundColor: '#fff3cd',
+                border: '1px solid #ffeaa7',
+                borderRadius: '8px',
+                padding: '10px',
+                marginBottom: '15px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px'
+            }}>
+                <span style={{ fontSize: '1.5rem' }}>⚠️</span>
+                <div>
+                    <strong style={{ color: '#856404' }}>
+                        {data.length} blocking quer{data.length === 1 ? 'y' : 'ies'} detected
+                    </strong>
+                    <p style={{ margin: '5px 0 0 0', fontSize: '0.9rem', color: '#856404' }}>
+                        These queries are preventing other queries from executing
+                    </p>
+                </div>
+            </div>
+
+            {/* Table */}
+            <div style={{ 
+                border: '1px solid #dee2e6', 
+                borderRadius: '8px',
+                overflow: 'hidden'
+            }}>
+                <table style={{ 
+                    width: '100%', 
+                    borderCollapse: 'collapse',
+                    fontSize: '0.85rem'
+                }}>
+                    <thead>
+                        <tr style={{ backgroundColor: '#f8f9fa' }}>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Blocking PID
+                            </th>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Blocked PID
+                            </th>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Users
+                            </th>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Applications
+                            </th>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Blocking Query
+                            </th>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Blocked Query
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {data.map((block, index) => (
+                            <tr 
+                                key={index}
+                                style={{ 
+                                    backgroundColor: index % 2 === 0 ? '#ffffff' : '#f8f9fa',
+                                    transition: 'background-color 0.2s'
+                                }}
+                                onMouseEnter={(e) => e.target.parentNode.style.backgroundColor = '#ffebee'}
+                                onMouseLeave={(e) => e.target.parentNode.style.backgroundColor = index % 2 === 0 ? '#ffffff' : '#f8f9fa'}
+                            >
+                                <td style={{ 
+                                    padding: '12px 8px', 
+                                    borderBottom: '1px solid #dee2e6',
+                                    fontFamily: 'monospace',
+                                    fontWeight: 'bold',
+                                    color: '#e74c3c'
+                                }}>
+                                    {block.blocking_pid}
+                                </td>
+                                <td style={{ 
+                                    padding: '12px 8px', 
+                                    borderBottom: '1px solid #dee2e6',
+                                    fontFamily: 'monospace',
+                                    fontWeight: 'bold',
+                                    color: '#f39c12'
+                                }}>
+                                    {block.blocked_pid}
+                                </td>
+                                <td style={{ padding: '12px 8px', borderBottom: '1px solid #dee2e6' }}>
+                                    <div style={{ lineHeight: '1.4' }}>
+                                        <div style={{ color: '#e74c3c', fontWeight: '500' }}>
+                                            Blocking: {block.blocking_user || 'N/A'}
+                                        </div>
+                                        <div style={{ color: '#f39c12', fontSize: '0.8rem' }}>
+                                            Blocked: {block.blocked_user || 'N/A'}
+                                        </div>
+                                    </div>
+                                </td>
+                                <td style={{ padding: '12px 8px', borderBottom: '1px solid #dee2e6' }}>
+                                    <div style={{ lineHeight: '1.4' }}>
+                                        <div style={{ color: '#666', fontSize: '0.8rem' }}>
+                                            {block.blocking_application || 'N/A'}
+                                        </div>
+                                        <div style={{ color: '#666', fontSize: '0.8rem' }}>
+                                            {block.blocked_application || 'N/A'}
+                                        </div>
+                                    </div>
+                                </td>
+                                <td style={{ 
+                                    padding: '12px 8px', 
+                                    borderBottom: '1px solid #dee2e6',
+                                    maxWidth: '200px'
+                                }}>
+                                    <div 
+                                        title={block.current_statement_in_blocking_process}
+                                        style={{ 
+                                            fontFamily: 'monospace',
+                                            fontSize: '0.75rem',
+                                            backgroundColor: '#fff5f5',
+                                            padding: '4px 6px',
+                                            borderRadius: '4px',
+                                            border: '1px solid #fed7d7',
+                                            color: '#e74c3c',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            whiteSpace: 'nowrap'
+                                        }}
+                                    >
+                                        {truncateQuery(block.current_statement_in_blocking_process, 50)}
+                                    </div>
+                                </td>
+                                <td style={{ 
+                                    padding: '12px 8px', 
+                                    borderBottom: '1px solid #dee2e6',
+                                    maxWidth: '200px'
+                                }}>
+                                    <div 
+                                        title={block.blocked_statement}
+                                        style={{ 
+                                            fontFamily: 'monospace',
+                                            fontSize: '0.75rem',
+                                            backgroundColor: '#fffaf0',
+                                            padding: '4px 6px',
+                                            borderRadius: '4px',
+                                            border: '1px solid #fed7aa',
+                                            color: '#f39c12',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            whiteSpace: 'nowrap'
+                                        }}
+                                    >
+                                        {truncateQuery(block.blocked_statement, 50)}
+                                    </div>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* Action Suggestions */}
+            <div style={{
+                marginTop: '15px',
+                padding: '10px',
+                backgroundColor: '#e8f4fd',
+                border: '1px solid #bee5eb',
+                borderRadius: '8px'
+            }}>
+                <h4 style={{ margin: '0 0 8px 0', color: '#0c5460', fontSize: '0.9rem' }}>
+                    💡 Suggested Actions:
+                </h4>
+                <ul style={{ margin: '0', paddingLeft: '20px', fontSize: '0.8rem', color: '#0c5460' }}>
+                    <li>Review long-running transactions in blocking processes</li>
+                    <li>Consider killing blocking queries if they're stuck: <code>SELECT pg_terminate_backend(pid)</code></li>
+                    <li>Analyze query patterns to prevent future blocks</li>
+                    <li>Check for missing indexes on frequently locked tables</li>
+                </ul>
+            </div>
+        </div>
+    );
+};
+
+export default BlockingQueriesTable;

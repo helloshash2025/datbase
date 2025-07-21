@@ -1,0 +1,184 @@
+import React from 'react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+
+const CPUByQueriesChart = ({ data }) => {
+    const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#34495e', '#e67e22'];
+
+    const formatChartData = () => {
+        if (!data || data.length === 0) return [];
+        
+        return data.slice(0, 8).map((item, index) => ({
+            query: `Query ${index + 1}`,
+            cpu_percentage: parseFloat(item.cpu_portion_pctg || 0),
+            total_time: parseFloat(item.total_time || 0),
+            calls: item.calls || 0,
+            mean_time: parseFloat(item.mean || 0),
+            db_name: item.db_name || 'Unknown',
+            query_snippet: item.query_snippet || 'No query available',
+            color: COLORS[index % COLORS.length]
+        }));
+    };
+
+    const chartData = formatChartData();
+
+    const CustomTooltip = ({ active, payload, label }) => {
+        if (active && payload && payload.length) {
+            const data = payload[0].payload;
+            return (
+                <div style={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    padding: '12px',
+                    border: '1px solid #ccc',
+                    borderRadius: '8px',
+                    maxWidth: '300px'
+                }}>
+                    <p style={{ margin: '0 0 8px 0', fontWeight: 'bold' }}>{label}</p>
+                    <p style={{ margin: '4px 0', color: '#e74c3c' }}>
+                        CPU: {data.cpu_percentage}%
+                    </p>
+                    <p style={{ margin: '4px 0', color: '#666' }}>
+                        Total Time: {data.total_time}ms
+                    </p>
+                    <p style={{ margin: '4px 0', color: '#666' }}>
+                        Calls: {data.calls}
+                    </p>
+                    <p style={{ margin: '4px 0', color: '#666' }}>
+                        Mean Time: {data.mean_time}ms
+                    </p>
+                    <p style={{ margin: '4px 0', color: '#666' }}>
+                        Database: {data.db_name}
+                    </p>
+                    <p style={{ 
+                        margin: '8px 0 0 0', 
+                        fontSize: '0.85rem', 
+                        color: '#333',
+                        fontFamily: 'monospace',
+                        backgroundColor: '#f5f5f5',
+                        padding: '4px',
+                        borderRadius: '4px'
+                    }}>
+                        Query: {data.query_snippet}...
+                    </p>
+                </div>
+            );
+        }
+        return null;
+    };
+
+    const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
+        if (percent < 0.05) return null; // Don't show labels for slices less than 5%
+        
+        const RADIAN = Math.PI / 180;
+        const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+        const x = cx + radius * Math.cos(-midAngle * RADIAN);
+        const y = cy + radius * Math.sin(-midAngle * RADIAN);
+
+        return (
+            <text 
+                x={x} 
+                y={y} 
+                fill="white" 
+                textAnchor={x > cx ? 'start' : 'end'} 
+                dominantBaseline="central"
+                fontSize={12}
+                fontWeight="bold"
+            >
+                {`${(percent * 100).toFixed(0)}%`}
+            </text>
+        );
+    };
+
+    if (!data || data.length === 0) {
+        return (
+            <div style={{ 
+                height: '400px', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                color: '#666'
+            }}>
+                <p>No query data available</p>
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ height: '400px' }}>
+            <div style={{ display: 'flex', gap: '20px', height: '100%' }}>
+                {/* Bar Chart */}
+                <div style={{ flex: 1 }}>
+                    <h3 style={{ margin: '0 0 15px 0', fontSize: '1rem', color: '#666' }}>
+                        CPU Usage by Query
+                    </h3>
+                    <ResponsiveContainer width="100%" height="85%">
+                        <BarChart data={chartData}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis 
+                                dataKey="query" 
+                                fontSize={10}
+                                angle={-45}
+                                textAnchor="end"
+                                height={60}
+                            />
+                            <YAxis 
+                                label={{ value: 'CPU %', angle: -90, position: 'insideLeft' }}
+                                fontSize={10}
+                            />
+                            <Tooltip content={<CustomTooltip />} />
+                            <Bar 
+                                dataKey="cpu_percentage" 
+                                fill="#e74c3c"
+                                radius={[4, 4, 0, 0]}
+                            />
+                        </BarChart>
+                    </ResponsiveContainer>
+                </div>
+
+                {/* Pie Chart */}
+                <div style={{ flex: 1 }}>
+                    <h3 style={{ margin: '0 0 15px 0', fontSize: '1rem', color: '#666' }}>
+                        CPU Distribution
+                    </h3>
+                    <ResponsiveContainer width="100%" height="85%">
+                        <PieChart>
+                            <Pie
+                                data={chartData}
+                                cx="50%"
+                                cy="50%"
+                                labelLine={false}
+                                label={renderCustomizedLabel}
+                                outerRadius={80}
+                                fill="#8884d8"
+                                dataKey="cpu_percentage"
+                            >
+                                {chartData.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                                ))}
+                            </Pie>
+                            <Tooltip content={<CustomTooltip />} />
+                        </PieChart>
+                    </ResponsiveContainer>
+                </div>
+            </div>
+
+            {/* Summary Stats */}
+            <div style={{ 
+                marginTop: '15px', 
+                display: 'flex', 
+                gap: '20px', 
+                fontSize: '0.85rem',
+                color: '#666'
+            }}>
+                <span>Total Queries: {data.length}</span>
+                <span>
+                    Total CPU Time: {data.reduce((sum, item) => sum + (parseFloat(item.total_time) || 0), 0).toFixed(2)}ms
+                </span>
+                <span>
+                    Total Calls: {data.reduce((sum, item) => sum + (item.calls || 0), 0).toLocaleString()}
+                </span>
+            </div>
+        </div>
+    );
+};
+
+export default CPUByQueriesChart;

@@ -1,0 +1,177 @@
+#!/usr/bin/env node
+const { Pool } = require('pg');
+require('dotenv').config();
+
+const pool = new Pool({
+    user: process.env.DB_USER || 'postgres',
+    host: process.env.DB_HOST || 'localhost',
+    database: 'source_db', // Use source_db which has our test data
+    password: process.env.DB_PASSWORD || 'root',
+    port: parseInt(process.env.DB_PORT) || 25011,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+});
+
+const cpuIntensiveQueries = [
+    {
+        name: "🔥 Cartesian Product Query",
+        description: "Cross join multiple tables to create high CPU load",
+        query: `
+            SELECT 
+                e1.name as emp1, 
+                e2.name as emp2, 
+                d1.name as dept1, 
+                d2.name as dept2,
+                e1.salary + e2.salary as combined_salary
+            FROM employees e1 
+            CROSS JOIN employees e2 
+            CROSS JOIN departments d1 
+            CROSS JOIN departments d2
+            WHERE e1.id != e2.id
+            ORDER BY combined_salary DESC
+            LIMIT 100;
+        `
+    },
+    {
+        name: "🌀 Recursive Fibonacci with Cross Join",
+        description: "Generate Fibonacci sequence with complex calculations",
+        query: `
+            WITH RECURSIVE fibonacci(n, fib_current, fib_next) AS (
+                SELECT 1, 0::BIGINT, 1::BIGINT
+                UNION ALL
+                SELECT n + 1, fib_next, fib_current + fib_next
+                FROM fibonacci
+                WHERE n < 30
+            )
+            SELECT f.n, f.fib_current, f.fib_current * e.salary as bonus
+            FROM fibonacci f
+            CROSS JOIN employees e
+            ORDER BY f.n, e.salary DESC;
+        `
+    },
+    {
+        name: "📊 Complex Window Functions",
+        description: "Heavy analytical queries with window functions",
+        query: `
+            SELECT 
+                e.name,
+                e.department,
+                e.salary,
+                ROW_NUMBER() OVER (PARTITION BY e.department ORDER BY e.salary DESC) as dept_rank,
+                LAG(e.salary, 1) OVER (PARTITION BY e.department ORDER BY e.salary) as prev_salary,
+                AVG(e.salary) OVER (PARTITION BY e.department) as dept_avg_salary,
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY e.salary) OVER (PARTITION BY e.department) as dept_median,
+                DENSE_RANK() OVER (ORDER BY e.salary DESC) as company_rank
+            FROM employees e
+            ORDER BY e.department, e.salary DESC;
+        `
+    },
+    {
+        name: "🔢 Mathematical Operations with Generate Series",
+        description: "Heavy mathematical calculations",
+        query: `
+            SELECT 
+                gs.num,
+                gs.num * gs.num as squared,
+                sqrt(gs.num) as square_root,
+                ln(gs.num + 1) as natural_log,
+                sin(gs.num::float / 180 * pi()) as sine_value,
+                cos(gs.num::float / 180 * pi()) as cosine_value,
+                (SELECT COUNT(*) FROM employees WHERE salary > gs.num * 100) as count_above
+            FROM generate_series(1, 500) gs(num)
+            WHERE gs.num % 3 = 0
+            ORDER BY gs.num;
+        `
+    },
+    {
+        name: "🔤 String Processing Intensive",
+        description: "Heavy string operations and pattern matching",
+        query: `
+            SELECT 
+                e.name,
+                upper(e.name) as name_upper,
+                reverse(e.name) as name_reversed,
+                md5(e.email) as email_hash,
+                repeat(e.name || ' ', 20) as repeated_name,
+                translate(e.name, 'aeiouAEIOU', '1234512345') as vowels_replaced
+            FROM employees e
+            CROSS JOIN generate_series(1, 50)
+            ORDER BY e.name;
+        `
+    },
+    {
+        name: "📈 Heavy Aggregation with Grouping Sets",
+        description: "Complex aggregations across multiple dimensions",
+        query: `
+            SELECT 
+                COALESCE(department, 'ALL') as department,
+                COALESCE(
+                    CASE 
+                        WHEN salary < 70000 THEN 'Low'
+                        WHEN salary < 90000 THEN 'Medium' 
+                        ELSE 'High'
+                    END, 
+                    'ALL_RANGES'
+                ) as salary_range,
+                COUNT(*) as employee_count,
+                AVG(salary) as avg_salary,
+                STDDEV(salary) as salary_stddev,
+                PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY salary) as q1_salary,
+                PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY salary) as q3_salary
+            FROM employees
+            GROUP BY GROUPING SETS (
+                (department),
+                (CASE WHEN salary < 70000 THEN 'Low' WHEN salary < 90000 THEN 'Medium' ELSE 'High' END),
+                (department, CASE WHEN salary < 70000 THEN 'Low' WHEN salary < 90000 THEN 'Medium' ELSE 'High' END),
+                ()
+            );
+        `
+    }
+];
+
+async function runCPUIntensiveQueries() {
+    console.log('🚀 Starting CPU-intensive query testing...');
+    console.log('💡 Watch the monitoring dashboard at http://localhost:5173');
+    console.log('');
+
+    for (let i = 0; i < cpuIntensiveQueries.length; i++) {
+        const queryInfo = cpuIntensiveQueries[i];
+        console.log(`${i + 1}/${cpuIntensiveQueries.length} ${queryInfo.name}`);
+        console.log(`   📝 ${queryInfo.description}`);
+        
+        try {
+            const startTime = Date.now();
+            const result = await pool.query(queryInfo.query);
+            const endTime = Date.now();
+            const executionTime = endTime - startTime;
+            
+            console.log(`   ✅ Completed in ${executionTime}ms (${result.rows.length} rows)`);
+            console.log(`   🔥 CPU load generated - check your dashboard!`);
+        } catch (error) {
+            console.log(`   ❌ Error: ${error.message}`);
+        }
+        
+        console.log('');
+        
+        // Wait 2 seconds between queries to see the effect on dashboard
+        if (i < cpuIntensiveQueries.length - 1) {
+            console.log('   ⏱️  Waiting 3 seconds before next query...');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+    }
+
+    console.log('🎉 CPU-intensive testing completed!');
+    console.log('📊 Check your monitoring dashboard for the results');
+    
+    await pool.end();
+}
+
+// Handle Ctrl+C gracefully
+process.on('SIGINT', async () => {
+    console.log('\n🛑 Stopping CPU-intensive queries...');
+    await pool.end();
+    process.exit(0);
+});
+
+runCPUIntensiveQueries().catch(console.error);

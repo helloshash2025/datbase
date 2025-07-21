@@ -1,0 +1,852 @@
+  // Download helper for tables
+  function downloadTable(rows, filename) {
+    if (!rows || !rows.length) return;
+    const keys = Object.keys(rows[0]);
+    const csv = [keys.join(',')].concat(
+      rows.map(row => keys.map(k => '"' + String(row[k]).replace(/"/g, '""') + '"').join(','))
+    ).join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 100);
+  }
+import React, { useEffect, useState } from 'react';
+import io from 'socket.io-client';
+import axios from 'axios';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, BarChart, Bar, CartesianGrid, AreaChart, Area } from 'recharts';
+import CPUChart from './CPUChart';
+import ReplicationLagChart from './ReplicationLagChart';
+import ReplicationSlotsTable from './ReplicationSlotsTable';
+import ReplicationStatTable from './ReplicationStatTable';
+
+// We'll create the socket dynamically after user enters connection details
+let socket = null;
+
+// Helper to fetch server list from backend (credential file)
+async function fetchServerList() {
+  try {
+    const res = await axios.get('/api/servers');
+    return res.data || [];
+  } catch {
+    return [];
+  }
+}
+
+const Dashboard = () => {
+
+  // Server list and selected server
+  const [serverList, setServerList] = useState([]);
+  const [selectedServer, setSelectedServer] = useState(null);
+  // Connection details state (manual fallback)
+  const [host, setHost] = useState('localhost');
+  const [port, setPort] = useState('25011');
+  const [user, setUser] = useState('postgres');
+  const [password, setPassword] = useState('root');
+  const [database, setDatabase] = useState('postgres');
+  // Unix (remote server) readonly user for CPU/OS metrics
+  const [unixUser, setUnixUser] = useState('');
+  const [unixPassword, setUnixPassword] = useState('');
+
+  // On mount, fetch server list
+  useEffect(() => {
+    fetchServerList().then(list => setServerList(list));
+  }, []);
+
+  // When a server is selected, auto-fill connection fields
+  useEffect(() => {
+    if (selectedServer) {
+      setHost(selectedServer.host || '');
+      setPort(selectedServer.port || '');
+      setUser(selectedServer.user || '');
+      setPassword(selectedServer.password || '');
+      setDatabase(selectedServer.database || '');
+      setUnixUser(selectedServer.unixUser || '');
+      setUnixPassword(selectedServer.unixPassword || '');
+    }
+  }, [selectedServer]);
+
+  const [mode, setMode] = useState('realtime');
+  const [data, setData] = useState([]);
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Real-time updates
+  useEffect(() => {
+    if (mode === 'realtime' && host && port && user && password && database) {
+      // Disconnect previous socket if any
+      if (socket) {
+        socket.disconnect();
+      }
+      // Connect with query params for connection details
+      socket = io('http://localhost:3001', {
+        transports: ['websocket'],
+        query: { host, port, user, password, database }
+      });
+      const handleData = (d) => {
+        setData(prev => [...prev.slice(-59), d]);
+      };
+      socket.on('monitoringData', handleData);
+      return () => {
+        socket.off('monitoringData', handleData);
+        socket.disconnect();
+      };
+    }
+    // eslint-disable-next-line
+  }, [mode, host, port, user, password, database]);
+
+  // Fetch historical data
+  const fetchHistory = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // If no start/end, or for quick demo, use dummy data for yesterday
+      if (!start || !end) {
+        // Generate 10 dummy points for yesterday with logical replication details
+        const now = new Date();
+        const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const dummy = Array.from({ length: 10 }).map((_, i) => {
+          const t = new Date(yesterday.getTime() + i * 60 * 60 * 1000);
+          // Dummy logical replication lag details (pg_stat_replication)
+          const replication_lag_details = [
+            {
+              client_addr: '192.168.1.10',
+              application_name: 'logical_sub_' + (i + 1),
+              state: 'streaming',
+              sent_lsn: '0/1A2B3C4D',
+              write_lsn: '0/1A2B3C4D',
+              flush_lsn: '0/1A2B3C4D',
+              replay_lsn: '0/1A2B3C4D',
+              connection_duration: Math.random() * 3600 + 1800, // 30min to 1.5hr
+              lag_seconds: Math.random() * 10, // 0-10s lag
+              sync_priority: 1,
+              sync_state: 'sync',
+              pid: 4000 + i,
+              usesysid: 16384,
+              usename: 'replicator',
+              backend_start: t.toISOString(),
+              state_change: t.toISOString(),
+              reply_time: t.toISOString()
+            }
+          ];
+          // Dummy logical replication slots (pg_replication_slots)
+          const replication_slots = [
+            {
+              slot_name: 'logical_slot_' + (i + 1),
+              plugin: 'pgoutput',
+              slot_type: 'logical',
+              datoid: 16384,
+              database: 'postgres',
+              active: i % 2 === 0,
+              xmin: null,
+              catalog_xmin: '500',
+              restart_lsn: '0/1A2B3C4D',
+              confirmed_flush_lsn: '0/1A2B3C4D',
+              temporary: false,
+              active_pid: 4000 + i,
+              xmin_age: Math.floor(Math.random() * 1000),
+              catalog_xmin_age: Math.floor(Math.random() * 1000),
+              restart_lsn_age: Math.floor(Math.random() * 1000),
+              confirmed_flush_lsn_age: Math.floor(Math.random() * 1000)
+            }
+          ];
+          return {
+            captured_at: t.toISOString().slice(0, 19).replace('T', ' '),
+            cpu: Math.round(Math.random() * 80 + 10),
+            replication_lag: replication_lag_details[0].lag_seconds,
+            replication_lag_details,
+            replication_slots,
+            high_cpu_queries: [
+              {
+                query_snippet: 'SELECT * FROM big_table WHERE id = ' + (i + 1),
+                cpu_portion_pctg: Math.round(Math.random() * 80),
+                total_time: Math.round(Math.random() * 1000),
+                calls: Math.floor(Math.random() * 10) + 1,
+                mean: Math.round(Math.random() * 100),
+                state: 'active'
+              }
+            ],
+            blocking_queries: [
+              {
+                blocked_pid: 1000 + i,
+                blocked_user: 'user' + i,
+                blocking_pid: 2000 + i,
+                blocking_user: 'user' + (i + 1),
+                blocked_statement: 'UPDATE big_table SET val = val + 1 WHERE id = ' + (i + 1),
+                current_statement_in_blocking_process: 'SELECT * FROM big_table WHERE id = ' + (i + 1)
+              }
+            ]
+          };
+        });
+        setData(dummy);
+        setLoading(false);
+        return;
+      }
+      const res = await axios.get('/api/history', {
+        params: {
+          start,
+          end,
+          host,
+          port,
+          user,
+          password,
+          database
+        }
+      });
+      setData(res.data);
+    } catch (err) {
+      setError('Failed to load historical data.');
+    }
+    setLoading(false);
+  };
+
+  // Helper to get the latest snapshot (for real-time mode)
+  const latest = Array.isArray(data) && data.length > 0 ? data[data.length - 1] : {};
+  // For historical, show tables for the selected snapshot (or last in range)
+  const snapshot = mode === 'realtime' ? latest : (Array.isArray(data) && data.length > 0 ? data[data.length - 1] : {});
+
+  // Parse JSON fields if needed
+  let highCpuQueries = snapshot.high_cpu_queries;
+  let blockingQueries = snapshot.blocking_queries;
+  let replicationSlots = snapshot.replication_slots;
+  let replicationLagDetails = snapshot.replication_lag_details;
+  if (typeof highCpuQueries === 'string') {
+    try { highCpuQueries = JSON.parse(highCpuQueries); } catch {}
+  }
+  if (typeof blockingQueries === 'string') {
+    try { blockingQueries = JSON.parse(blockingQueries); } catch {}
+  }
+  if (typeof replicationSlots === 'string') {
+    try { replicationSlots = JSON.parse(replicationSlots); } catch {}
+  }
+  if (typeof replicationLagDetails === 'string') {
+    try { replicationLagDetails = JSON.parse(replicationLagDetails); } catch {}
+  }
+  highCpuQueries = Array.isArray(highCpuQueries) ? highCpuQueries : [];
+  blockingQueries = Array.isArray(blockingQueries) ? blockingQueries : [];
+  replicationSlots = Array.isArray(replicationSlots) ? replicationSlots : [];
+  replicationLagDetails = Array.isArray(replicationLagDetails) ? replicationLagDetails : [];
+
+  // Remove all metric toggles and view options in favor of tabbed layout
+
+  // Prepare data for CPU, Memory, Load Average, Network, and Replication Lag graphs
+  const cpuGraphData = Array.isArray(data) ? data.map(row => ({
+    captured_at: row.captured_at,
+    cpu: row.cpu
+  })) : [];
+  const memoryGraphData = Array.isArray(data) ? data.map(row => ({
+    captured_at: row.captured_at,
+    memory: row.memory_usage || row.memory || null
+  })) : [];
+  const loadAvgGraphData = Array.isArray(data) ? data.map(row => ({
+    captured_at: row.captured_at,
+    load1: row.loadavg_1m || row.load1 || null,
+    load5: row.loadavg_5m || row.load5 || null,
+    load15: row.loadavg_15m || row.load15 || null
+  })) : [];
+  const networkGraphData = Array.isArray(data) ? data.map(row => ({
+    captured_at: row.captured_at,
+    net_in: row.network_in || row.net_in || null,
+    net_out: row.network_out || row.net_out || null
+  })) : [];
+  const replicationLagGraphData = Array.isArray(data) ? data.map(row => ({
+    captured_at: row.captured_at,
+    replication_lag: row.replication_lag
+  })) : [];
+
+
+  // Prepare data for High CPU Queries graph (top 5 by cpu_portion_pctg)
+  const topCpuQueries = highCpuQueries
+    .sort((a, b) => (b.cpu_portion_pctg || 0) - (a.cpu_portion_pctg || 0))
+    .slice(0, 5);
+
+  // --- UI rendering starts here ---
+  // Tab state for main metrics
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'cpu', 'blocking', 'replication', 'console'
+  const [queryInput, setQueryInput] = useState('');
+  const [queryResult, setQueryResult] = useState(null);
+  const [queryError, setQueryError] = useState(null);
+  const [terminatingPid, setTerminatingPid] = useState(null);
+
+  // Handler to terminate a PID (blocking or high CPU)
+  const terminatePid = async (pid) => {
+    if (!window.confirm(`Are you sure you want to terminate PID ${pid}?`)) return;
+    setTerminatingPid(pid);
+    try {
+      await axios.post('/api/terminate', { pid, host, port, user, password, database });
+      alert('Terminate signal sent.');
+    } catch (e) {
+      alert('Failed to terminate PID: ' + (e?.response?.data?.error || e.message));
+    }
+    setTerminatingPid(null);
+  };
+
+  // Handler to run custom SQL
+  const runQuery = async () => {
+    setQueryResult(null);
+    setQueryError(null);
+    try {
+      const res = await axios.post('/api/query', { sql: queryInput, host, port, user, password, database });
+      setQueryResult(res.data);
+    } catch (e) {
+      setQueryError(e?.response?.data?.error || e.message);
+    }
+  };
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #181f2a 60%, #232c3d 100%)',
+      fontFamily: 'Segoe UI, Roboto, Arial, sans-serif',
+      color: '#e3e8f0',
+      paddingTop: 72
+    }}>
+      {/* Header Bar */}
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: 64,
+        background: 'linear-gradient(90deg, #1a2233 80%, #1e2a44 100%)',
+        color: '#fff',
+        zIndex: 100,
+        display: 'flex',
+        alignItems: 'center',
+        boxShadow: '0 2px 12px #0006',
+        paddingLeft: 32,
+        fontWeight: 700,
+        fontSize: 24,
+        letterSpacing: 1.5
+      }}>
+        <span style={{ color: '#3ec6ff', fontWeight: 900, fontSize: 28, marginRight: 16 }}>PG</span>
+        <span style={{ color: '#fff', fontWeight: 700 }}>Dynamics</span>
+        <span style={{ marginLeft: 18, fontSize: 15, color: '#7fd7ff', fontWeight: 400, letterSpacing: 0.5 }}>PostgreSQL Monitoring Dashboard</span>
+      </div>
+      {/* Main metric/function tabs */}
+      <div style={{
+        display: 'flex',
+        gap: 0,
+        margin: '0 auto 18px auto',
+        maxWidth: 1300,
+        borderBottom: '2.5px solid #26304a',
+        background: 'rgba(24,31,42,0.98)',
+        borderRadius: '0 0 16px 16px',
+        boxShadow: '0 2px 12px #0003',
+        position: 'relative',
+        zIndex: 10
+      }}>
+        {[
+          { key: 'dashboard', label: 'Dashboard' },
+          { key: 'cpu', label: 'CPU' },
+          { key: 'blocking', label: 'Blocking' },
+          { key: 'replication', label: 'Replication' },
+          { key: 'console', label: 'Query Console' }
+        ].map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            style={{
+              padding: '16px 40px',
+              border: 'none',
+              borderBottom: activeTab === tab.key ? '4px solid #3ec6ff' : '4px solid transparent',
+              background: 'none',
+              fontWeight: 700,
+              fontSize: 17,
+              color: activeTab === tab.key ? '#3ec6ff' : '#b0c4e0',
+              cursor: 'pointer',
+              transition: 'all 0.18s',
+              outline: 'none',
+              letterSpacing: 0.5,
+              marginRight: 2
+            }}
+            onMouseOver={e => e.currentTarget.style.color = '#fff'}
+            onMouseOut={e => e.currentTarget.style.color = activeTab === tab.key ? '#3ec6ff' : '#b0c4e0'}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {/* Dashboard Tab: All graphs and tables */}
+      {activeTab === 'dashboard' && (
+        <div style={{ width: '100vw', maxWidth: '100%', margin: 0, padding: '0 2vw' }}>
+          {/* Real-Time / Historical mode selector and connection details for Dashboard only */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 18,
+            marginBottom: 24,
+            flexWrap: 'wrap',
+            justifyContent: 'flex-end',
+            background: 'rgba(36, 48, 70, 0.98)',
+            borderRadius: 14,
+            padding: 18,
+            boxShadow: '0 2px 12px #0004',
+            border: '1px solid #26304a',
+            color: '#e3eafc',
+          }}>
+          {/* Server selector from credential file */}
+          {serverList.length > 0 && (
+            <select
+              value={selectedServer ? selectedServer.id || selectedServer.host : ''}
+              onChange={e => {
+                const sel = serverList.find(s => (s.id || s.host) === e.target.value);
+                setSelectedServer(sel || null);
+              }}
+              style={{ minWidth: 180, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16, marginRight: 12 }}
+            >
+              <option value="">Select Server...</option>
+              {serverList.map((srv, idx) => (
+                <option key={srv.id || srv.host || idx} value={srv.id || srv.host}>
+                  {srv.name || srv.host + ':' + srv.port}
+                </option>
+              ))}
+            </select>
+          )}
+          {/* Manual entry fallback */}
+          <input type="text" placeholder="Host" value={host} onChange={e => { setHost(e.target.value); setSelectedServer(null); }} style={{ minWidth: 100, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16, marginRight: 2 }} />
+          <input type="text" placeholder="Port" value={port} onChange={e => { setPort(e.target.value); setSelectedServer(null); }} style={{ minWidth: 70, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16, marginRight: 2 }} />
+          <input type="text" placeholder="User" value={user} onChange={e => { setUser(e.target.value); setSelectedServer(null); }} style={{ minWidth: 90, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16, marginRight: 2 }} />
+          <input type="password" placeholder="Password" value={password} onChange={e => { setPassword(e.target.value); setSelectedServer(null); }} style={{ minWidth: 90, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16, marginRight: 2 }} />
+          <input type="text" placeholder="Database" value={database} onChange={e => { setDatabase(e.target.value); setSelectedServer(null); }} style={{ minWidth: 110, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16, marginRight: 2 }} />
+          {/* Unix readonly user for OS metrics */}
+          <input type="text" placeholder="Unix User (readonly)" value={unixUser} onChange={e => { setUnixUser(e.target.value); setSelectedServer(null); }} style={{ minWidth: 110, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16, marginRight: 2 }} />
+          <input type="password" placeholder="Unix Password" value={unixPassword} onChange={e => { setUnixPassword(e.target.value); setSelectedServer(null); }} style={{ minWidth: 110, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16, marginRight: 2 }} />
+            <button
+              onClick={() => setMode('realtime')}
+              style={{ background: mode === 'realtime' ? 'linear-gradient(90deg,#4fd1ff 60%,#1976d2 100%)' : 'none', color: mode === 'realtime' ? '#232b3e' : '#4fd1ff', border: '1.5px solid #4fd1ff', borderRadius: 8, padding: '10px 24px', fontWeight: 700, fontSize: 16, cursor: 'pointer', transition: 'all 0.2s', marginRight: 2 }}
+            >
+              Real-Time
+            </button>
+            <button
+              onClick={() => setMode(mode === 'historical' ? 'realtime' : 'historical')}
+              style={{ background: mode === 'historical' ? 'linear-gradient(90deg,#4fd1ff 60%,#1976d2 100%)' : 'none', color: mode === 'historical' ? '#232b3e' : '#4fd1ff', border: '1.5px solid #4fd1ff', borderRadius: 8, padding: '10px 24px', fontWeight: 700, fontSize: 16, cursor: 'pointer', transition: 'all 0.2s', marginRight: 2 }}
+            >
+              Historical
+            </button>
+            {mode === 'historical' && (
+              <div style={{ marginTop: 16, background: '#232b3e', borderRadius: 10, padding: 18, boxShadow: '0 2px 8px #0002', maxWidth: 700 }}>
+                {/* Only ask for hostname for historical mode */}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <input type="text" placeholder="Host" value={host} onChange={e => setHost(e.target.value)} style={{ minWidth: 100, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16 }} />
+                </div>
+                <input
+                  type="datetime-local"
+                  value={start}
+                  onChange={e => setStart(e.target.value)}
+                  style={{ minWidth: 200, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16, marginRight: 2 }}
+                />
+                <input
+                  type="datetime-local"
+                  value={end}
+                  onChange={e => setEnd(e.target.value)}
+                  style={{ minWidth: 200, borderRadius: 8, border: '1.5px solid #4fd1ff', padding: 10, background: '#232b3e', color: '#e3eafc', fontSize: 16, marginRight: 2 }}
+                />
+                <button onClick={fetchHistory} disabled={loading} style={{ borderRadius: 8, padding: '10px 24px', background: 'linear-gradient(90deg,#4fd1ff 60%,#1976d2 100%)', color: '#232b3e', fontWeight: 700, fontSize: 16, border: 'none', cursor: 'pointer', transition: 'all 0.2s', marginRight: 2 }}>
+                  {loading ? 'Loading...' : 'Load'}
+                </button>
+              </div>
+            )}
+          </div>
+          {/* CPU Usage Graph */}
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', marginBottom: '3vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <h2 style={{ margin: 0, marginBottom: 16, color: '#222' }}>CPU Usage (Graph)</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={cpuGraphData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                <XAxis dataKey="captured_at" tickFormatter={v => v && v.slice(11, 19)} />
+                <YAxis domain={[0, 100]} label={{ value: 'CPU %', angle: -90, position: 'insideLeft' }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="cpu" stroke="#8884d8" name="CPU (%)" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          {/* Memory Usage Graph */}
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', marginBottom: '3vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <h2 style={{ margin: 0, marginBottom: 16, color: '#222' }}>Memory Usage (Graph)</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <AreaChart data={memoryGraphData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                <XAxis dataKey="captured_at" tickFormatter={v => v && v.slice(11, 19)} />
+                <YAxis label={{ value: 'Memory (MB)', angle: -90, position: 'insideLeft' }} />
+                <Tooltip />
+                <Legend />
+                <Area type="monotone" dataKey="memory" stroke="#ff9800" fill="#ffe0b2" name="Memory (MB)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          {/* Load Average Graph */}
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', marginBottom: '3vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <h2 style={{ margin: 0, marginBottom: 16, color: '#222' }}>Load Average (Graph)</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={loadAvgGraphData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                <XAxis dataKey="captured_at" tickFormatter={v => v && v.slice(11, 19)} />
+                <YAxis label={{ value: 'Load', angle: -90, position: 'insideLeft' }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="load1" stroke="#1976d2" name="1m" dot={false} />
+                <Line type="monotone" dataKey="load5" stroke="#388e3c" name="5m" dot={false} />
+                <Line type="monotone" dataKey="load15" stroke="#d32f2f" name="15m" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          {/* Network Usage Graph */}
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', marginBottom: '3vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <h2 style={{ margin: 0, marginBottom: 16, color: '#222' }}>Network Usage (Graph)</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={networkGraphData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                <XAxis dataKey="captured_at" tickFormatter={v => v && v.slice(11, 19)} />
+                <YAxis label={{ value: 'Bytes/s', angle: -90, position: 'insideLeft' }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="net_in" stroke="#00bcd4" name="Network In (B/s)" dot={false} />
+                <Line type="monotone" dataKey="net_out" stroke="#f44336" name="Network Out (B/s)" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          {/* Top 10 High CPU Queries Table */}
+          <div style={{ marginTop: 0, marginBottom: '3vw', background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <h3 style={{ marginTop: 0, color: '#222', marginBottom: 0 }}>Top 10 High CPU Queries</h3>
+              <button onClick={() => downloadTable(highCpuQueries.slice(0, 10), 'high_cpu_queries.csv')} style={{ background: '#3ec6ff', color: '#222', border: 'none', borderRadius: 6, padding: '4px 12px', fontWeight: 600, cursor: 'pointer', fontSize: 13, marginLeft: 'auto', minWidth: 0 }}>Download CSV</button>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '1.08rem', background: '#181f2a', color: '#e3eafc', borderRadius: 12, overflow: 'hidden', boxShadow: '0 2px 12px #0002' }}>
+                <thead style={{ background: '#e0e4ea', color: '#222', fontWeight: 700 }}>
+                  <tr>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', textAlign: 'left', background: '#e0e4ea', color: '#222' }}>Query</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>CPU %</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Total Time (ms)</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Calls</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Mean Time (ms)</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>State</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {highCpuQueries.slice(0, 10).length === 0 && (
+                    <tr><td colSpan={6} style={{ textAlign: 'center', color: '#888', background: '#232c3d' }}>No data</td></tr>
+                  )}
+                  {highCpuQueries.slice(0, 10).map((q, i) => (
+                    <tr key={i} style={q.cpu_portion_pctg > 50 ? { background: '#2d1a1a' } : { background: i % 2 === 0 ? '#20293a' : '#232c3d' }}>
+                      <td style={{ maxWidth: 350, whiteSpace: 'pre-wrap', wordBreak: 'break-all', padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.query_snippet || q.query || ''}</td>
+                      <td style={q.cpu_portion_pctg > 50 ? { color: '#ff5a5a', fontWeight: 700, padding: '10px 8px', borderBottom: '1.5px solid #232c3d' } : { padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.cpu_portion_pctg ?? ''}</td>
+                      <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.total_time ?? ''}</td>
+                      <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.calls ?? ''}</td>
+                      <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.mean ?? ''}</td>
+                      <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.state ?? ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {/* Replication Lag Graph */}
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', marginBottom: '3vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <h2 style={{ margin: 0, marginBottom: 16, color: '#222' }}>Replication Lag (Graph)</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={replicationLagGraphData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                <XAxis dataKey="captured_at" tickFormatter={v => v && v.slice(11, 19)} />
+                <YAxis label={{ value: 'Lag (s)', angle: -90, position: 'insideLeft' }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="replication_lag" stroke="#82ca9d" name="Replication Lag (s)" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Connection and mode panel (shared across tabs) */}
+      {/* Removed for AppDynamics look: connection panel is now in Dashboard tab only for a cleaner, focused UI */}
+      {error && <div style={{ color: '#d32f2f', background: '#fff0f0', border: '1px solid #f8bcbc', borderRadius: 8, padding: 12, marginBottom: 18, fontWeight: 500 }}>{error}</div>}
+
+      {/* CPU Tab: 10 most recent CPU points, top 10 high CPU queries */}
+      {activeTab === 'cpu' && (
+        <div style={{ width: '100vw', maxWidth: '100%', margin: 0, padding: '0 2vw' }}>
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', marginBottom: '3vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <h2 style={{ margin: 0, marginBottom: 16, color: '#222' }}>CPU Usage (Last 10 x 10s)</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={cpuGraphData.slice(-10)} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                <XAxis dataKey="captured_at" tickFormatter={v => v && v.slice(11, 19)} />
+                <YAxis domain={[0, 100]} label={{ value: 'CPU %', angle: -90, position: 'insideLeft' }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="cpu" stroke="#8884d8" name="CPU (%)" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          {/* Top 10 High CPU Queries Table */}
+          <div style={{ marginTop: 0, marginBottom: '3vw', background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <h3 style={{ marginTop: 0, color: '#222', marginBottom: 0 }}>Top 10 High CPU Queries</h3>
+              <button onClick={() => downloadTable(highCpuQueries.slice(0, 10), 'high_cpu_queries.csv')} style={{ background: '#3ec6ff', color: '#222', border: 'none', borderRadius: 6, padding: '4px 12px', fontWeight: 600, cursor: 'pointer', fontSize: 13, marginLeft: 'auto', minWidth: 0 }}>Download CSV</button>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '1.08rem', background: '#181f2a', color: '#e3eafc', borderRadius: 12, overflow: 'hidden', boxShadow: '0 2px 12px #0002' }}>
+                <thead style={{ background: '#e0e4ea', color: '#222', fontWeight: 700 }}>
+                  <tr>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', textAlign: 'left', background: '#e0e4ea', color: '#222' }}>Query</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>CPU %</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Total Time (ms)</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Calls</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Mean Time (ms)</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>State</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {highCpuQueries.slice(0, 10).length === 0 && (
+                    <tr><td colSpan={6} style={{ textAlign: 'center', color: '#888', background: '#232c3d' }}>No data</td></tr>
+                  )}
+                  {highCpuQueries.slice(0, 10).map((q, i) => (
+                    <tr key={i} style={q.cpu_portion_pctg > 50 ? { background: '#2d1a1a' } : { background: i % 2 === 0 ? '#20293a' : '#232c3d' }}>
+                      <td style={{ maxWidth: 350, whiteSpace: 'pre-wrap', wordBreak: 'break-all', padding: '10px 8px', borderBottom: '1.5px solid #232c3d', color: '#e3eafc' }}>{q.query_snippet || q.query || ''}</td>
+                      <td style={q.cpu_portion_pctg > 50 ? { color: '#ff5a5a', fontWeight: 700, padding: '10px 8px', borderBottom: '1.5px solid #232c3d' } : { color: '#e3eafc', padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.cpu_portion_pctg ?? ''}</td>
+                      <td style={{ color: '#e3eafc', padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.total_time ?? ''}</td>
+                      <td style={{ color: '#e3eafc', padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.calls ?? ''}</td>
+                      <td style={{ color: '#e3eafc', padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.mean ?? ''}</td>
+                      <td style={{ color: '#e3eafc', padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.state ?? ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Blocking Tab */}
+      {activeTab === 'blocking' && (
+        <div style={{ width: '100vw', maxWidth: '100%', margin: 0, padding: '0 2vw' }}>
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', border: '1.5px solid #e0e4ea', marginBottom: '3vw', width: '100%', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <h3 style={{ marginTop: 0, color: '#222', marginBottom: 0 }}>Blocking Queries</h3>
+            <button onClick={() => downloadTable(blockingQueries, 'blocking_queries.csv')} style={{ background: '#3ec6ff', color: '#222', border: 'none', borderRadius: 6, padding: '4px 12px', fontWeight: 600, cursor: 'pointer', fontSize: 13, marginLeft: 'auto', minWidth: 0 }}>Download CSV</button>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '1.08rem', background: '#fff', color: '#111', borderRadius: 12, overflow: 'hidden', boxShadow: '0 2px 12px #0002' }}>
+              <thead style={{ background: 'linear-gradient(90deg, #232c3d 80%, #26304a 100%)', color: '#3ec6ff', fontWeight: 700 }}>
+                <tr>
+                  <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Blocked PID</th>
+                  <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Blocked User</th>
+                  <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Blocking PID</th>
+                  <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Blocking User</th>
+                  <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Blocked Statement</th>
+                  <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Blocking Statement</th>
+                  <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Since</th>
+                  <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Terminate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {blockingQueries.length === 0 && (
+                  <tr><td colSpan={8} style={{ textAlign: 'center', color: '#888', background: '#232c3d' }}>No data</td></tr>
+                )}
+                {blockingQueries.map((q, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? '#20293a' : '#232c3d' }}>
+                    <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.blocked_pid ?? ''}</td>
+                    <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.blocked_user ?? ''}</td>
+                    <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.blocking_pid ?? ''}</td>
+                    <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.blocking_user ?? ''}</td>
+                    <td style={{ maxWidth: 300, whiteSpace: 'pre-wrap', wordBreak: 'break-all', padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.blocked_statement ?? ''}</td>
+                    <td style={{ maxWidth: 300, whiteSpace: 'pre-wrap', wordBreak: 'break-all', padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.current_statement_in_blocking_process ?? ''}</td>
+                    <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{q.since || '-'}</td>
+                    <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>
+                      {q.blocked_pid && (
+                        <button onClick={() => terminatePid(q.blocked_pid)} disabled={terminatingPid === q.blocked_pid} style={{ background: '#d32f2f', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 12px', fontWeight: 600, cursor: 'pointer' }}>
+                          {terminatingPid === q.blocked_pid ? 'Terminating...' : 'Terminate'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+      )}
+
+      {/* Replication Tab: slots, stat, lag highlight, and pg_stat_replication table, refresh every 30s */}
+      {activeTab === 'replication' && (
+        <div style={{ width: '100vw', maxWidth: '100%', margin: 0, padding: '0 2vw' }}>
+          {/* Replication Lag Graph with lag highlight and total lag in GB */}
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', marginBottom: '3vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <h2 style={{ margin: 0, marginBottom: 16, color: '#222' }}>Replication Lag (Graph)</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={replicationLagGraphData} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                <XAxis dataKey="captured_at" tickFormatter={v => v && v.slice(11, 19)} />
+                <YAxis label={{ value: 'Lag (s)', angle: -90, position: 'insideLeft' }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="replication_lag" stroke="#82ca9d" name="Replication Lag (s)" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+            {/* Total Replication Lag in GB summary */}
+            {(() => {
+              // Calculate total lag in bytes (if available)
+              // If lag_bytes is present in replicationLagDetails, sum it; else, show No lag
+              let totalLagBytes = 0;
+              let hasLag = false;
+              if (replicationLagDetails && replicationLagDetails.length > 0) {
+                for (const r of replicationLagDetails) {
+                  // Try to use lag_bytes, else fallback to lag_seconds * 16MB (approximate WAL segment size)
+                  if (typeof r.lag_bytes === 'number') {
+                    totalLagBytes += r.lag_bytes;
+                    if (r.lag_bytes > 0) hasLag = true;
+                  } else if (typeof r.lag_seconds === 'number' && r.lag_seconds > 0) {
+                    totalLagBytes += r.lag_seconds * 16 * 1024 * 1024;
+                    hasLag = true;
+                  }
+                }
+              }
+              let totalLagGB = totalLagBytes / (1024 ** 3);
+              if (hasLag && totalLagBytes > 0) {
+                return (
+                  <div style={{ color: '#d32f2f', fontWeight: 700, marginTop: 16, fontSize: 22, background: '#fff3e0', borderRadius: 10, padding: '10px 18px', display: 'inline-block', boxShadow: '0 2px 8px #0001' }}>
+                    Total Replication Lag: {totalLagGB.toFixed(3)} GB
+                  </div>
+                );
+              } else if (hasLag) {
+                // Lag present but no bytes info
+                return (
+                  <div style={{ color: '#d32f2f', fontWeight: 600, marginTop: 12, fontSize: 18 }}>
+                    Replication Lag Detected (see table below for details)
+                  </div>
+                );
+              } else {
+                return (
+                  <div style={{ color: '#388e3c', fontWeight: 700, marginTop: 16, fontSize: 22, background: '#e8f5e9', borderRadius: 10, padding: '10px 18px', display: 'inline-block', boxShadow: '0 2px 8px #0001' }}>
+                    No lag
+                  </div>
+                );
+              }
+            })()}
+          </div>
+          {/* Replication Slots Table (refresh every 30s) with slot-wise lag */}
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', marginBottom: '3vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <h3 style={{ marginTop: 0, color: '#222', marginBottom: 0 }}>Replication Slots (30s refresh, with Lag)</h3>
+              <button onClick={() => downloadTable(replicationSlots, 'replication_slots.csv')} style={{ background: '#3ec6ff', color: '#222', border: 'none', borderRadius: 6, padding: '4px 12px', fontWeight: 600, cursor: 'pointer', fontSize: 13, marginLeft: 'auto', minWidth: 0 }}>Download CSV</button>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '1.08rem', background: '#fff', color: '#111', borderRadius: 12, overflow: 'hidden', boxShadow: '0 2px 12px #0002' }}>
+                <thead style={{ background: '#e0e4ea', color: '#222', fontWeight: 700 }}>
+                  <tr>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Slot Name</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Plugin</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Slot Type</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Database</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Active</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Lag (s)</th>
+                    <th style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>Lag (approx. MB)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {replicationSlots.length === 0 && (
+                    <tr><td colSpan={7} style={{ textAlign: 'center', color: '#888', background: '#232c3d' }}>No data</td></tr>
+                  )}
+                  {replicationSlots.map((slot, i) => {
+                    // Find lag for this slot from replicationLagDetails by application_name or slot_name
+                    let lagRow = replicationLagDetails.find(r => r.application_name === slot.slot_name || r.slot_name === slot.slot_name);
+                    let lagSeconds = lagRow ? (lagRow.lag_seconds || 0) : 0;
+                    let lagMB = lagRow ? ((lagRow.lag_seconds || 0) * 16) : 0;
+                    return (
+                      <tr key={i} style={{ background: i % 2 === 0 ? '#20293a' : '#232c3d' }}>
+                        <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{slot.slot_name}</td>
+                        <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{slot.plugin}</td>
+                        <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{slot.slot_type}</td>
+                        <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{slot.database}</td>
+                        <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{slot.active ? 'Yes' : 'No'}</td>
+                        <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{lagSeconds.toFixed(2)}</td>
+                        <td style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{lagMB.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {/* Replication Stat Table */}
+          {replicationLagDetails && replicationLagDetails.length > 0 && (
+            <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', marginBottom: '3vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+              <h3 style={{ marginTop: 0, color: '#222' }}>Replication Stat</h3>
+              <ReplicationStatTable data={replicationLagDetails} />
+            </div>
+          )}
+          {/* Replication Stat Table (tabular format) */}
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', marginBottom: '3vw', border: '1.5px solid #e0e4ea', width: '100%', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <h3 style={{ marginTop: 0, color: '#222', marginBottom: 0 }}>Replication Stat</h3>
+              <button onClick={() => downloadTable(replicationLagDetails, 'replication_stat.csv')} style={{ background: '#3ec6ff', color: '#222', border: 'none', borderRadius: 6, padding: '4px 12px', fontWeight: 600, cursor: 'pointer', fontSize: 13, marginLeft: 'auto', minWidth: 0 }}>Download CSV</button>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              {replicationLagDetails && replicationLagDetails.length > 0 ? (
+                <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '1.08rem', background: '#fff', color: '#111', borderRadius: 12, overflow: 'hidden', boxShadow: '0 2px 12px #0002' }}>
+                  <thead style={{ background: 'linear-gradient(90deg, #232c3d 80%, #26304a 100%)', color: '#3ec6ff', fontWeight: 700 }}>
+                    <tr>
+                      {Object.keys(replicationLagDetails[0]).map((col, idx) => <th key={idx} style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>{col}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {replicationLagDetails.map((row, i) => (
+                      <tr key={i} style={{ background: i % 2 === 0 ? '#20293a' : '#232c3d' }}>
+                        {Object.values(row).map((val, j) => <td key={j} style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{String(val)}</td>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div style={{ color: '#888', padding: 12 }}>No replication data</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Query Console Tab */}
+      {activeTab === 'console' && (
+        <div style={{ width: '100vw', maxWidth: '100%', margin: 0, padding: '0 2vw' }}>
+          <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px #0002', padding: '2vw', border: '1.5px solid #e0e4ea', marginBottom: '3vw', width: '100%', minWidth: 0, minHeight: 300 }}>
+          <h3 style={{ marginTop: 0, color: '#222' }}>Query Console</h3>
+          <textarea value={queryInput} onChange={e => setQueryInput(e.target.value)} placeholder="Enter SQL query here..." style={{ width: '100%', minHeight: 80, fontSize: 15, borderRadius: 8, border: '1px solid #bfc7d1', padding: 10, marginBottom: 12, fontFamily: 'monospace' }} />
+          <button onClick={runQuery} style={{ background: '#646cff', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 24px', fontWeight: 600, fontSize: 15, cursor: 'pointer', marginBottom: 16 }}>Run</button>
+          {queryError && <div style={{ color: '#d32f2f', background: '#fff0f0', border: '1px solid #f8bcbc', borderRadius: 8, padding: 12, marginBottom: 18, fontWeight: 500 }}>{queryError}</div>}
+          {queryResult && Array.isArray(queryResult.rows) && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, marginTop: 10 }}>
+                <div></div>
+                <button onClick={() => downloadTable(queryResult.rows, 'query_console_result.csv')} style={{ background: '#3ec6ff', color: '#222', border: 'none', borderRadius: 6, padding: '4px 12px', fontWeight: 600, cursor: 'pointer', fontSize: 13, marginLeft: 'auto', minWidth: 0 }}>Download CSV</button>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '1.08rem', background: '#181f2a', color: '#e3eafc', borderRadius: 12, overflow: 'hidden', boxShadow: '0 2px 12px #0002' }}>
+                  <thead style={{ background: 'linear-gradient(90deg, #232c3d 80%, #26304a 100%)', color: '#3ec6ff', fontWeight: 700 }}>
+                    <tr>
+                      {Object.keys(queryResult.rows[0] || {}).map((col, idx) => <th key={idx} style={{ padding: '12px 10px', borderBottom: '2.5px solid #bfc7d1', background: '#e0e4ea', color: '#222' }}>{col}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {queryResult.rows.map((row, i) => (
+                      <tr key={i} style={{ background: i % 2 === 0 ? '#20293a' : '#232c3d' }}>
+                        {Object.values(row).map((val, j) => <td key={j} style={{ padding: '10px 8px', borderBottom: '1.5px solid #232c3d' }}>{String(val)}</td>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+        </div>
+      )}
+
+    </div>
+  );
+};
+
+export default Dashboard;

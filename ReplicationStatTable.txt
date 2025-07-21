@@ -1,0 +1,49 @@
+import React from 'react';
+
+const ReplicationStatTable = ({ data }) => {
+  if (!data || data.length === 0) {
+    return (
+      <div style={{ height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888', background: '#f8f9fa', borderRadius: 8, border: '2px dashed #dee2e6' }}>
+        No replication stat data
+      </div>
+    );
+  }
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
+        <thead style={{ background: '#f7f8fa' }}>
+          <tr>
+            <th>PID</th>
+            <th>User</th>
+            <th>App Name</th>
+            <th>Client Addr</th>
+            <th>State</th>
+            <th>Lag (s)</th>
+            <th>Sync State</th>
+            <th>Sync Priority</th>
+            <th>Backend Start</th>
+            <th>Reply Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((r, i) => (
+            <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f8f9fa' }}>
+              <td>{r.pid}</td>
+              <td>{r.usename}</td>
+              <td>{r.application_name}</td>
+              <td>{r.client_addr}</td>
+              <td>{r.state}</td>
+              <td>{r.lag_seconds != null ? r.lag_seconds.toFixed(2) : ''}</td>
+              <td>{r.sync_state}</td>
+              <td>{r.sync_priority}</td>
+              <td>{r.backend_start ? new Date(r.backend_start).toLocaleString() : ''}</td>
+              <td>{r.reply_time ? new Date(r.reply_time).toLocaleString() : ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+export default ReplicationStatTable;

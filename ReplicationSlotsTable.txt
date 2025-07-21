@@ -1,0 +1,216 @@
+import React from 'react';
+
+const ReplicationSlotsTable = ({ data }) => {
+    const getSlotStatusColor = (active) => {
+        return active ? '#2ecc71' : '#e74c3c';
+    };
+
+    const getSlotTypeIcon = (type) => {
+        switch (type) {
+            case 'logical': return '🔄';
+            case 'physical': return '📀';
+            default: return '❓';
+        }
+    };
+
+    if (!data || data.length === 0) {
+        return (
+            <div style={{ 
+                height: '200px', 
+                display: 'flex', 
+                flexDirection: 'column',
+                alignItems: 'center', 
+                justifyContent: 'center',
+                color: '#666',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '8px',
+                border: '2px dashed #dee2e6'
+            }}>
+                <div style={{ fontSize: '3rem', marginBottom: '10px' }}>🎰</div>
+                <p style={{ margin: '0', fontSize: '1.1rem' }}>No replication slots found</p>
+                <p style={{ margin: '5px 0 0 0', fontSize: '0.9rem', color: '#999' }}>
+                    Create logical replication slots to see data here
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ height: '300px', overflowY: 'auto' }}>
+            {/* Summary */}
+            <div style={{ 
+                display: 'flex', 
+                gap: '20px', 
+                marginBottom: '15px',
+                padding: '10px',
+                backgroundColor: '#f8f9fa',
+                borderRadius: '8px'
+            }}>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#2c3e50' }}>
+                        {data.length}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#666' }}>Total Slots</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ 
+                        fontSize: '1.2rem', 
+                        fontWeight: 'bold', 
+                        color: '#2ecc71'
+                    }}>
+                        {data.filter(slot => slot.active).length}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#666' }}>Active</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ 
+                        fontSize: '1.2rem', 
+                        fontWeight: 'bold', 
+                        color: '#3498db'
+                    }}>
+                        {data.filter(slot => slot.slot_type === 'logical').length}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#666' }}>Logical</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ 
+                        fontSize: '1.2rem', 
+                        fontWeight: 'bold', 
+                        color: '#9b59b6'
+                    }}>
+                        {data.filter(slot => slot.slot_type === 'physical').length}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#666' }}>Physical</div>
+                </div>
+            </div>
+
+            {/* Table */}
+            <div style={{ 
+                border: '1px solid #dee2e6', 
+                borderRadius: '8px',
+                overflow: 'hidden'
+            }}>
+                <table style={{ 
+                    width: '100%', 
+                    borderCollapse: 'collapse',
+                    fontSize: '0.85rem'
+                }}>
+                    <thead>
+                        <tr style={{ backgroundColor: '#f8f9fa' }}>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Status
+                            </th>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Slot Name
+                            </th>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Type
+                            </th>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Plugin
+                            </th>
+                            <th style={{ 
+                                padding: '12px 8px', 
+                                textAlign: 'left', 
+                                borderBottom: '1px solid #dee2e6',
+                                fontWeight: '600',
+                                color: '#2c3e50'
+                            }}>
+                                Database
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {data.map((slot, index) => (
+                            <tr 
+                                key={index}
+                                style={{ 
+                                    backgroundColor: index % 2 === 0 ? '#ffffff' : '#f8f9fa',
+                                    transition: 'background-color 0.2s'
+                                }}
+                                onMouseEnter={(e) => e.target.parentNode.style.backgroundColor = '#e3f2fd'}
+                                onMouseLeave={(e) => e.target.parentNode.style.backgroundColor = index % 2 === 0 ? '#ffffff' : '#f8f9fa'}
+                            >
+                                <td style={{ padding: '12px 8px', borderBottom: '1px solid #dee2e6' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span 
+                                            style={{
+                                                width: '10px',
+                                                height: '10px',
+                                                borderRadius: '50%',
+                                                backgroundColor: getSlotStatusColor(slot.active),
+                                                display: 'inline-block'
+                                            }}
+                                        ></span>
+                                        <span style={{ 
+                                            color: getSlotStatusColor(slot.active),
+                                            fontWeight: '500'
+                                        }}>
+                                            {slot.active ? 'Active' : 'Inactive'}
+                                        </span>
+                                    </div>
+                                </td>
+                                <td style={{ 
+                                    padding: '12px 8px', 
+                                    borderBottom: '1px solid #dee2e6',
+                                    fontFamily: 'monospace',
+                                    fontWeight: '500'
+                                }}>
+                                    {slot.slot_name || 'N/A'}
+                                </td>
+                                <td style={{ padding: '12px 8px', borderBottom: '1px solid #dee2e6' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                        <span>{getSlotTypeIcon(slot.slot_type)}</span>
+                                        <span style={{ textTransform: 'capitalize' }}>
+                                            {slot.slot_type || 'Unknown'}
+                                        </span>
+                                    </div>
+                                </td>
+                                <td style={{ 
+                                    padding: '12px 8px', 
+                                    borderBottom: '1px solid #dee2e6',
+                                    color: '#666'
+                                }}>
+                                    {slot.plugin || 'N/A'}
+                                </td>
+                                <td style={{ 
+                                    padding: '12px 8px', 
+                                    borderBottom: '1px solid #dee2e6',
+                                    color: '#666'
+                                }}>
+                                    {slot.database || 'N/A'}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
+
+export default ReplicationSlotsTable;

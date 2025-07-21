@@ -1,0 +1,99 @@
+import React, { useState, useEffect } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+
+const CPUChart = ({ data }) => {
+    const [chartData, setChartData] = useState([]);
+    const maxDataPoints = 20; // Keep last 20 data points
+
+    useEffect(() => {
+        if (data && data.currentLoad !== undefined) {
+            const newDataPoint = {
+                time: new Date(data.timestamp).toLocaleTimeString(),
+                cpu: Math.round(data.currentLoad * 10) / 10, // Round to 1 decimal
+                timestamp: data.timestamp
+            };
+
+            setChartData(prevData => {
+                const updatedData = [...prevData, newDataPoint];
+                // Keep only the last maxDataPoints
+                return updatedData.slice(-maxDataPoints);
+            });
+        }
+    }, [data]);
+
+    const formatTooltip = (value, name) => {
+        if (name === 'cpu') {
+            return [`${value}%`, 'CPU Usage'];
+        }
+        return [value, name];
+    };
+
+    const getCurrentCPU = () => {
+        return data && data.currentLoad ? Math.round(data.currentLoad * 10) / 10 : 0;
+    };
+
+    const getCPUColor = (cpu) => {
+        if (cpu < 50) return '#4CAF50';
+        if (cpu < 80) return '#ff9800';
+        return '#f44336';
+    };
+
+    const currentCPU = getCurrentCPU();
+
+    return (
+        <div style={{ height: '300px', width: '100%' }}>
+            <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                marginBottom: '15px' 
+            }}>
+                <div style={{ 
+                    fontSize: '2rem', 
+                    fontWeight: 'bold', 
+                    color: getCPUColor(currentCPU) 
+                }}>
+                    {currentCPU}%
+                </div>
+                <div style={{ fontSize: '0.9rem', color: '#666' }}>
+                    Real-time CPU Usage
+                </div>
+            </div>
+            
+            <ResponsiveContainer width="100%" height="85%">
+                <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                        dataKey="time" 
+                        interval="preserveStartEnd"
+                        fontSize={12}
+                    />
+                    <YAxis 
+                        domain={[0, 100]}
+                        label={{ value: 'CPU %', angle: -90, position: 'insideLeft' }}
+                        fontSize={12}
+                    />
+                    <Tooltip 
+                        formatter={formatTooltip}
+                        labelStyle={{ color: '#666' }}
+                        contentStyle={{
+                            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                            border: '1px solid #ccc',
+                            borderRadius: '8px'
+                        }}
+                    />
+                    <Line 
+                        type="monotone" 
+                        dataKey="cpu" 
+                        stroke="#e74c3c" 
+                        strokeWidth={3}
+                        dot={{ fill: '#e74c3c', strokeWidth: 2, r: 4 }}
+                        activeDot={{ r: 6, stroke: '#e74c3c', strokeWidth: 2 }}
+                    />
+                </LineChart>
+            </ResponsiveContainer>
+        </div>
+    );
+};
+
+export default CPUChart;

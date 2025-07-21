@@ -1,0 +1,200 @@
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
+const cors = require('cors');
+const si = require('systeminformation');
+
+const app = express();
+const server = http.createServer(app);
+
+// Enable CORS for all routes
+app.use(cors({
+    origin: "http://localhost:5173",
+    credentials: true
+}));
+
+app.use(express.json());
+
+// Initialize Socket.IO with CORS
+const io = socketIo(server, {
+    cors: {
+        origin: "http://localhost:5173",
+        methods: ["GET", "POST"],
+        credentials: true
+    }
+});
+
+// Mock data generators
+function generateMockReplicationLag() {
+    return [
+        {
+            client_addr: '192.168.1.10',
+            application_name: 'replica_1',
+            state: 'streaming',
+            connection_duration: 3600 + Math.random() * 7200,
+            lag_seconds: Math.random() * 5
+        },
+        {
+            client_addr: '192.168.1.11',
+            application_name: 'replica_2',
+            state: 'streaming',
+            connection_duration: 1800 + Math.random() * 3600,
+            lag_seconds: Math.random() * 2
+        }
+    ];
+}
+
+function generateMockReplicationSlots() {
+    return [
+        {
+            slot_name: 'logical_slot_1',
+            plugin: 'pgoutput',
+            slot_type: 'logical',
+            database: 'myapp',
+            active: true
+        },
+        {
+            slot_name: 'logical_slot_2',
+            plugin: 'wal2json',
+            slot_type: 'logical',
+            database: 'analytics',
+            active: true
+        },
+        {
+            slot_name: 'physical_slot_1',
+            plugin: null,
+            slot_type: 'physical',
+            database: null,
+            active: false
+        }
+    ];
+}
+
+function generateMockBlockingQueries() {
+    // Sometimes return no blocking queries, sometimes return some
+    if (Math.random() > 0.3) return [];
+    
+    return [
+        {
+            blocked_pid: 12345,
+            blocked_user: 'app_user',
+            blocking_pid: 12340,
+            blocking_user: 'admin_user',
+            blocked_statement: 'SELECT * FROM orders WHERE customer_id = $1 FOR UPDATE',
+            current_statement_in_blocking_process: 'UPDATE customers SET last_login = NOW() WHERE id = $1',
+            blocked_application: 'web_app',
+            blocking_application: 'admin_dashboard'
+        }
+    ];
+}
+
+function generateMockCPUByQueries() {
+    const queries = [
+        'SELECT * FROM large_table WHERE created_at > $1',
+        'UPDATE user_stats SET last_activity = NOW()',
+        'SELECT COUNT(*) FROM transactions GROUP BY date',
+        'INSERT INTO audit_log (action, user_id) VALUES ($1, $2)',
+        'SELECT * FROM products JOIN categories ON products.category_id = categories.id',
+        'DELETE FROM temp_data WHERE processed = true',
+        'CREATE INDEX CONCURRENTLY idx_orders_date ON orders(created_at)',
+        'VACUUM ANALYZE user_sessions'
+    ];
+
+    return queries.map((query, index) => ({
+        userid: 1000 + index,
+        dbid: 16384,
+        db_name: ['myapp', 'analytics', 'reporting'][index % 3],
+        total_time: Math.random() * 10000 + 100,
+        calls: Math.floor(Math.random() * 1000) + 10,
+        mean: Math.random() * 100 + 5,
+        cpu_portion_pctg: Math.random() * 30 + 1,
+        query_snippet: query
+    })).sort((a, b) => b.total_time - a.total_time);
+}
+
+async function getSystemCPU() {
+    try {
+        const cpuData = await si.cpu();
+        const cpuLoad = await si.currentLoad();
+        return {
+            manufacturer: cpuData.manufacturer,
+            brand: cpuData.brand,
+            cores: cpuData.cores,
+            currentLoad: cpuLoad.currentLoad,
+            avgLoad: cpuLoad.avgLoad,
+            timestamp: new Date()
+        };
+    } catch (error) {
+        console.error('Error fetching system CPU:', error);
+        return { 
+            currentLoad: Math.random() * 100, 
+            timestamp: new Date() 
+        };
+    }
+}
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+    console.log('Client connected:', socket.id);
+
+    // Start real-time monitoring with mock data
+    const monitoringInterval = setInterval(async () => {
+        try {
+            const systemCPU = await getSystemCPU();
+            
+            socket.emit('monitoring_data', {
+                timestamp: new Date(),
+                replicationLag: generateMockReplicationLag(),
+                replicationSlots: generateMockReplicationSlots(),
+                blockingQueries: generateMockBlockingQueries(),
+                cpuByQueries: generateMockCPUByQueries(),
+                systemCPU
+            });
+        } catch (error) {
+            console.error('Error in monitoring interval:', error);
+            socket.emit('error', { message: 'Monitoring error occurred' });
+        }
+    }, 5000); // Update every 5 seconds
+
+    socket.on('disconnect', () => {
+        console.log('Client disconnected:', socket.id);
+        clearInterval(monitoringInterval);
+    });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'OK (Demo Mode)', timestamp: new Date() });
+});
+
+// API Routes with mock data
+app.get('/api/replication-lag', async (req, res) => {
+    res.json(generateMockReplicationLag());
+});
+
+app.get('/api/replication-slots', async (req, res) => {
+    res.json(generateMockReplicationSlots());
+});
+
+app.get('/api/blocking-queries', async (req, res) => {
+    res.json(generateMockBlockingQueries());
+});
+
+app.get('/api/cpu-by-queries', async (req, res) => {
+    res.json(generateMockCPUByQueries());
+});
+
+app.get('/api/system-cpu', async (req, res) => {
+    const data = await getSystemCPU();
+    res.json(data);
+});
+
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => {
+    console.log(`🚀 Demo Server running on port ${PORT}`);
+    console.log('📊 Dashboard available at: http://localhost:5173');
+    console.log('🔧 This is running in DEMO MODE with mock data');
+    console.log('💡 To use real PostgreSQL data, configure .env and use index.js');
+});
+
+module.exports = { app, server };
