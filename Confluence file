@@ -1,0 +1,50 @@
+# =============================
+# REPLICATION SETTINGS
+# =============================
+wal_level = logical
+max_wal_senders = 15
+max_replication_slots = 20
+
+# =============================
+# WAL CONTROL (VERY IMPORTANT)
+# =============================
+wal_keep_size = 4GB
+max_slot_wal_keep_size = 20GB
+wal_compression = on
+
+# =============================
+# WORKER PROCESSES
+# =============================
+max_worker_processes = 25
+max_logical_replication_workers = 10
+
+# =============================
+# MEMORY (128 GB RAM SYSTEM)
+# =============================
+shared_buffers = 32GB
+work_mem = 64MB
+maintenance_work_mem = 2GB
+effective_cache_size = 96GB
+
+# =============================
+# CHECKPOINT & WAL TUNING
+# =============================
+checkpoint_timeout = 15min
+checkpoint_completion_target = 0.9
+max_wal_size = 20GB
+min_wal_size = 4GB
+
+# =============================
+# LOGGING
+# =============================
+logging_collector = on
+log_checkpoints = on
+log_connections = on
+log_disconnections = on
+log_replication_commands = on
+
+# =============================
+# OPTIONAL (STABILITY)
+# =============================
+hot_standby = on
+listen_addresses = '*'
