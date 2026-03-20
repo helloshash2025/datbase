@@ -1,0 +1,231 @@
+-- =====================================================
+-- FULL SCHEMA COMPARE + HEADER + LOGGING
+-- =====================================================
+
+DO $$
+BEGIN
+    RAISE NOTICE 'Step 1: Enabling FDW extension...';
+END $$;
+
+CREATE EXTENSION IF NOT EXISTS postgres_fdw;
+
+DO $$
+BEGIN
+    RAISE NOTICE 'Step 2: Creating FDW servers...';
+END $$;
+
+DROP SERVER IF EXISTS prod_server CASCADE;
+DROP SERVER IF EXISTS dev_server CASCADE;
+
+CREATE SERVER prod_server
+FOREIGN DATA WRAPPER postgres_fdw
+OPTIONS (host 'PROD_HOST', port '5432', dbname 'your_db');
+
+CREATE SERVER dev_server
+FOREIGN DATA WRAPPER postgres_fdw
+OPTIONS (host 'DEV_HOST', port '5432', dbname 'your_db');
+
+DO $$
+BEGIN
+    RAISE NOTICE 'Step 3: Creating user mappings...';
+END $$;
+
+CREATE USER MAPPING FOR CURRENT_USER
+SERVER prod_server
+OPTIONS (user 'readonly_user', password 'prod_password');
+
+CREATE USER MAPPING FOR CURRENT_USER
+SERVER dev_server
+OPTIONS (user 'readonly_user', password 'dev_password');
+
+DO $$
+BEGIN
+    RAISE NOTICE 'Step 4: Creating FDW schemas...';
+END $$;
+
+DROP SCHEMA IF EXISTS prod_fdw CASCADE;
+DROP SCHEMA IF EXISTS dev_fdw CASCADE;
+
+CREATE SCHEMA prod_fdw;
+CREATE SCHEMA dev_fdw;
+
+DO $$
+BEGIN
+    RAISE NOTICE 'Step 5: Importing metadata...';
+END $$;
+
+IMPORT FOREIGN SCHEMA information_schema
+FROM SERVER prod_server INTO prod_fdw;
+
+IMPORT FOREIGN SCHEMA information_schema
+FROM SERVER dev_server INTO dev_fdw;
+
+IMPORT FOREIGN SCHEMA pg_catalog
+LIMIT TO (pg_indexes)
+FROM SERVER prod_server INTO prod_fdw;
+
+IMPORT FOREIGN SCHEMA pg_catalog
+LIMIT TO (pg_indexes)
+FROM SERVER dev_server INTO dev_fdw;
+
+DO $$
+BEGIN
+    RAISE NOTICE 'Step 6: Running comparison and exporting CSV...';
+END $$;
+
+-- =============================
+-- EXPORT WITH HEADER
+-- =============================
+COPY (
+
+WITH report_header AS (
+    SELECT 
+        'Schema Compare Report' AS report_name,
+        'Shashank Shekhar' AS created_by,
+        CURRENT_TIMESTAMP AS created_on
+),
+
+schemas AS (
+    SELECT unnest(ARRAY['public','schema1','schema2']) AS schema_name
+),
+
+prod_tables AS (
+    SELECT table_schema, table_name FROM prod_fdw.tables
+    WHERE table_schema IN (SELECT schema_name FROM schemas)
+),
+dev_tables AS (
+    SELECT table_schema, table_name FROM dev_fdw.tables
+    WHERE table_schema IN (SELECT schema_name FROM schemas)
+),
+
+table_diff AS (
+    SELECT 
+        'TABLE' AS object_type,
+        COALESCE(p.table_schema, d.table_schema) AS schema_name,
+        COALESCE(p.table_name, d.table_name) AS table_name,
+        NULL AS object_name,
+        CASE 
+            WHEN p.table_name IS NULL THEN 'Missing in PROD'
+            WHEN d.table_name IS NULL THEN 'Missing in DEV'
+            ELSE 'MATCH'
+        END AS status
+    FROM prod_tables p
+    FULL OUTER JOIN dev_tables d
+    ON p.table_schema = d.table_schema
+    AND p.table_name = d.table_name
+),
+
+prod_cols AS (
+    SELECT table_schema, table_name, column_name, data_type, is_nullable
+    FROM prod_fdw.columns
+    WHERE table_schema IN (SELECT schema_name FROM schemas)
+),
+dev_cols AS (
+    SELECT table_schema, table_name, column_name, data_type, is_nullable
+    FROM dev_fdw.columns
+    WHERE table_schema IN (SELECT schema_name FROM schemas)
+),
+
+column_diff AS (
+    SELECT 
+        'COLUMN' AS object_type,
+        COALESCE(p.table_schema, d.table_schema) AS schema_name,
+        COALESCE(p.table_name, d.table_name) AS table_name,
+        COALESCE(p.column_name, d.column_name) AS object_name,
+        CASE 
+            WHEN p.column_name IS NULL THEN 'Missing in PROD'
+            WHEN d.column_name IS NULL THEN 'Missing in DEV'
+            WHEN p.data_type <> d.data_type THEN 'Datatype mismatch'
+            WHEN p.is_nullable <> d.is_nullable THEN 'Null mismatch'
+            ELSE 'MATCH'
+        END AS status
+    FROM prod_cols p
+    FULL OUTER JOIN dev_cols d
+    ON p.table_schema = d.table_schema
+    AND p.table_name = d.table_name
+    AND p.column_name = d.column_name
+),
+
+prod_const AS (
+    SELECT table_schema, table_name, constraint_name, constraint_type
+    FROM prod_fdw.table_constraints
+    WHERE table_schema IN (SELECT schema_name FROM schemas)
+),
+dev_const AS (
+    SELECT table_schema, table_name, constraint_name, constraint_type
+    FROM dev_fdw.table_constraints
+    WHERE table_schema IN (SELECT schema_name FROM schemas)
+),
+
+constraint_diff AS (
+    SELECT 
+        constraint_type AS object_type,
+        COALESCE(p.table_schema, d.table_schema) AS schema_name,
+        COALESCE(p.table_name, d.table_name) AS table_name,
+        COALESCE(p.constraint_name, d.constraint_name) AS object_name,
+        CASE 
+            WHEN p.constraint_name IS NULL THEN 'Missing in PROD'
+            WHEN d.constraint_name IS NULL THEN 'Missing in DEV'
+            ELSE 'MATCH'
+        END AS status
+    FROM prod_const p
+    FULL OUTER JOIN dev_const d
+    ON p.table_schema = d.table_schema
+    AND p.table_name = d.table_name
+    AND p.constraint_name = d.constraint_name
+),
+
+prod_indexes AS (
+    SELECT schemaname AS table_schema, tablename AS table_name, indexname
+    FROM prod_fdw.pg_indexes
+    WHERE schemaname IN (SELECT schema_name FROM schemas)
+),
+dev_indexes AS (
+    SELECT schemaname AS table_schema, tablename AS table_name, indexname
+    FROM dev_fdw.pg_indexes
+    WHERE schemaname IN (SELECT schema_name FROM schemas)
+),
+
+index_diff AS (
+    SELECT 
+        'INDEX' AS object_type,
+        COALESCE(p.table_schema, d.table_schema) AS schema_name,
+        COALESCE(p.table_name, d.table_name) AS table_name,
+        COALESCE(p.indexname, d.indexname) AS object_name,
+        CASE 
+            WHEN p.indexname IS NULL THEN 'Missing in PROD'
+            WHEN d.indexname IS NULL THEN 'Missing in DEV'
+            ELSE 'MATCH'
+        END AS status
+    FROM prod_indexes p
+    FULL OUTER JOIN dev_indexes d
+    ON p.table_schema = d.table_schema
+    AND p.table_name = d.table_name
+    AND p.indexname = d.indexname
+)
+
+SELECT 
+    h.report_name,
+    h.created_by,
+    h.created_on,
+    r.*
+FROM report_header h,
+(
+    SELECT * FROM table_diff
+    UNION ALL
+    SELECT * FROM column_diff
+    UNION ALL
+    SELECT * FROM constraint_diff
+    UNION ALL
+    SELECT * FROM index_diff
+) r
+
+ORDER BY schema_name, object_type, table_name
+
+) TO '/tmp/schema_compare_report.csv'
+WITH CSV HEADER;
+
+DO $$
+BEGIN
+    RAISE NOTICE '✅ Schema comparison completed. File generated at /tmp/schema_compare_report.csv';
+END $$;
