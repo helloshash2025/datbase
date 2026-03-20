@@ -1,0 +1,96 @@
+-- ==========================================
+-- SCHEMA METADATA EXPORT SCRIPT
+-- ==========================================
+
+-- Update prefix before running:
+-- For PROD → use 'prod'
+-- For DEV  → use 'dev'
+
+\set prefix 'prod'   -- change to 'dev' when running on DEV
+
+\echo '========================================='
+\echo 'Starting Schema Export...'
+\echo 'Environment :' :prefix
+\echo 'Date        :' `date`
+\echo '========================================='
+
+
+-- ==========================================
+-- TABLES
+-- ==========================================
+\echo 'Exporting TABLES...'
+
+\copy (
+SELECT 
+    table_schema,
+    table_name
+FROM information_schema.tables
+WHERE table_schema NOT IN ('pg_catalog','information_schema')
+ORDER BY table_schema, table_name
+) TO :prefix'_tables.csv' CSV HEADER;
+
+
+-- ==========================================
+-- COLUMNS
+-- ==========================================
+\echo 'Exporting COLUMNS...'
+
+\copy (
+SELECT 
+    table_schema,
+    table_name,
+    column_name,
+    data_type,
+    is_nullable,
+    column_default
+FROM information_schema.columns
+WHERE table_schema NOT IN ('pg_catalog','information_schema')
+ORDER BY table_schema, table_name, ordinal_position
+) TO :prefix'_columns.csv' CSV HEADER;
+
+
+-- ==========================================
+-- CONSTRAINTS (PK, FK, UNIQUE)
+-- ==========================================
+\echo 'Exporting CONSTRAINTS...'
+
+\copy (
+SELECT 
+    table_schema,
+    table_name,
+    constraint_name,
+    constraint_type
+FROM information_schema.table_constraints
+WHERE table_schema NOT IN ('pg_catalog','information_schema')
+ORDER BY table_schema, table_name
+) TO :prefix'_constraints.csv' CSV HEADER;
+
+
+-- ==========================================
+-- INDEXES
+-- ==========================================
+\echo 'Exporting INDEXES...'
+
+\copy (
+SELECT 
+    schemaname AS table_schema,
+    tablename AS table_name,
+    indexname,
+    indexdef
+FROM pg_indexes
+WHERE schemaname NOT IN ('pg_catalog','information_schema')
+ORDER BY schemaname, tablename
+) TO :prefix'_indexes.csv' CSV HEADER;
+
+
+-- ==========================================
+-- COMPLETED
+-- ==========================================
+\echo '========================================='
+\echo 'Export Completed Successfully'
+\echo 'Files Generated:'
+\echo :prefix'_tables.csv'
+\echo :prefix'_columns.csv'
+\echo :prefix'_constraints.csv'
+\echo :prefix'_indexes.csv'
+\echo '========================================='
