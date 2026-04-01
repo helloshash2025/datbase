@@ -1,0 +1,60 @@
+#!/bin/bash
+
+NEW_PRIMARY="$1"
+
+# ---- CONFIG ----
+DB_NAME="mydb"
+SUBSCRIBER_HOST="subscriber_host"
+SUBSCRIBER_PORT="5432"
+LOG_FILE="/var/log/efm_subscription_update.log"
+
+echo "[$(date)] ===== Failover detected. New primary: $NEW_PRIMARY =====" >> $LOG_FILE
+
+# Fetch all subscriptions
+SUB_LIST=$(psql -h $SUBSCRIBER_HOST -p $SUBSCRIBER_PORT -d $DB_NAME -Atc \
+"SELECT subname FROM pg_subscription;")
+
+# Loop through each subscription
+for SUB_NAME in $SUB_LIST
+do
+    echo "[$(date)] Processing subscription: $SUB_NAME" >> $LOG_FILE
+
+    # Get existing connection string
+    CONN_STR=$(psql -h $SUBSCRIBER_HOST -p $SUBSCRIBER_PORT -d $DB_NAME -Atc \
+    "SELECT subconninfo FROM pg_subscription WHERE subname='${SUB_NAME}';")
+
+    if [ -z "$CONN_STR" ]; then
+        echo "[$(date)] ERROR: Could not fetch conn string for $SUB_NAME" >> $LOG_FILE
+        continue
+    fi
+
+    echo "[$(date)] Old conn: $CONN_STR" >> $LOG_FILE
+
+    # Replace only host
+    NEW_CONN_STR=$(echo "$CONN_STR" | sed -E "s/host=[^ ]+/host=${NEW_PRIMARY}/")
+
+    echo "[$(date)] New conn: $NEW_CONN_STR" >> $LOG_FILE
+
+    # Apply updated connection
+    psql -h $SUBSCRIBER_HOST -p $SUBSCRIBER_PORT -d $DB_NAME <<EOF >> $LOG_FILE 2>&1
+ALTER SUBSCRIPTION ${SUB_NAME} CONNECTION '${NEW_CONN_STR}';
+EOF
+
+    if [ $? -eq 0 ]; then
+        echo "[$(date)] SUCCESS: Connection updated for $SUB_NAME" >> $LOG_FILE
+
+        # Optional: force reconnect
+        psql -h $SUBSCRIBER_HOST -p $SUBSCRIBER_PORT -d $DB_NAME <<EOF >> $LOG_FILE 2>&1
+ALTER SUBSCRIPTION ${SUB_NAME} DISABLE;
+ALTER SUBSCRIPTION ${SUB_NAME} ENABLE;
+EOF
+
+        echo "[$(date)] INFO: Subscription restarted for $SUB_NAME" >> $LOG_FILE
+
+    else
+        echo "[$(date)] ERROR: Failed to update $SUB_NAME" >> $LOG_FILE
+    fi
+
+done
+
+echo "[$(date)] ===== All subscriptions processed =====" >> $LOG_FILE
